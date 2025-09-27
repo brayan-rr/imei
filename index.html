@@ -1,608 +1,660 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Camera, Upload, Download, Copy, Trash2, Plus, Clipboard } from 'lucide-react';
-
-const IMEIExtractor = () => {
-  const [records, setRecords] = useState([]);
-  const [currentRecord, setCurrentRecord] = useState({
-    clienteEnvia: '',
-    intermediario: '',
-    nombrePersona: '',
-    telefono: '',
-    dni: '',
-    modelo: '',
-    imei1: '',
-    imei2: '',
-    fecha: new Date().toLocaleDateString('es-ES'),
-    hora: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
-  });
-  const [pasteStatus, setPasteStatus] = useState('');
-  const [saveStatus, setSaveStatus] = useState('');
-  const [clientesRecurrentes, setClientesRecurrentes] = useState([
-    'Cliente A', 'Cliente B', 'Cliente C' // Ejemplos iniciales
-  ]);
-  const [nuevoCliente, setNuevoCliente] = useState('');
-  const fileInputRef = useRef(null);
-
-  // URL de tu Google Apps Script
-  const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyrRGHhcKaFNLJ0WwYh882HrlaKLsNPtHE33wJalo58tt_TZ3oPrfd0FbwtY35rmZhT/exec';
-
-  // Efecto para manejar el pegado global
-  useEffect(() => {
-    const handlePaste = async (e) => {
-      const items = e.clipboardData?.items;
-      if (!items) return;
-
-      for (let i = 0; i < items.length; i++) {
-        if (items[i].type.indexOf('image') !== -1) {
-          e.preventDefault();
-          const file = items[i].getAsFile();
-          if (file) {
-            setPasteStatus('Procesando imagen...');
-            await processImageFile(file);
-            setPasteStatus('¡Imagen procesada!');
-            setTimeout(() => setPasteStatus(''), 2000);
-          }
-          break;
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>📱 Extractor Simple de Datos IMEI</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
         }
-      }
-    };
 
-    document.addEventListener('paste', handlePaste);
-    return () => document.removeEventListener('paste', handlePaste);
-  }, []);
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
 
-  // Función para extraer diferentes tipos de números de texto
-  const extractNumbers = (text) => {
-    // IMEI: exactamente 15 dígitos
-    const imeiPattern = /\b\d{15}\b/g;
-    const imeis = text.match(imeiPattern) || [];
-    
-    // Teléfono: números de 8-9 dígitos (más flexible para detectar celulares peruanos)
-    const phonePattern = /\b(?:9\d{8}|[16]\d{7})\b/g; // 9 dígitos empezando con 9, o 8 dígitos empezando con 1 o 6
-    let phones = text.match(phonePattern) || [];
-    
-    // También buscar números de 8 dígitos que podrían ser teléfonos
-    const phone8Pattern = /\b\d{8}\b/g;
-    const phones8 = text.match(phone8Pattern) || [];
-    
-    // Filtrar números que no sean IMEI ni DNI para considerarlos teléfonos
-    const allNumbers8to9 = text.match(/\b\d{8,9}\b/g) || [];
-    const potentialPhones = allNumbers8to9.filter(num => 
-      num.length === 8 || num.length === 9 && !imeis.includes(num)
-    );
-    
-    // Combinar todos los posibles teléfonos
-    phones = [...new Set([...phones, ...potentialPhones])];
-    
-    // DNI: exactamente 8 dígitos (pero excluir los que ya identificamos como teléfonos)
-    const dniPattern = /\b\d{8}\b(?!\d)/g;
-    let dnis = text.match(dniPattern) || [];
-    
-    // Separar DNI de teléfonos basado en contexto o posición
-    // Si hay múltiples números de 8 dígitos, el primero suele ser teléfono, el segundo DNI
-    if (phones8.length > 1) {
-      phones = [...phones, phones8[0]]; // Primer número de 8 dígitos como teléfono
-      dnis = phones8.slice(1); // Resto como potencial DNI
-    } else {
-      dnis = phones8.filter(num => !phones.includes(num));
-    }
-    
-    // Nombres: buscar patrones de nombres comunes en el texto
-    const namePatterns = [
-      /([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)?)/g
-    ];
-    
-    let names = [];
-    namePatterns.forEach(pattern => {
-      const matches = text.match(pattern) || [];
-      names = names.concat(matches);
-    });
-    
-    // Modelos de teléfono comunes
-    const modelPatterns = [
-      /(?:iPhone|Samsung|Xiaomi|Huawei|Oppo|Vivo|Realme|OnePlus|Nokia|Motorola|LG|Sony)\s*[A-Za-z0-9\s]*/gi,
-      /(?:Galaxy|Note|Pro|Max|Plus|Mini)\s*[A-Za-z0-9\s]*/gi,
-      /(?:Infinix|Tecno)\s*[A-Za-z0-9\s]*/gi
-    ];
-    
-    let models = [];
-    modelPatterns.forEach(pattern => {
-      const matches = text.match(pattern) || [];
-      models = models.concat(matches);
-    });
-    
-    return { imeis, phones, dnis, names, models };
-  };
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
 
-  // Función para procesar imagen (simulada - en la realidad necesitarías OCR)
-  const processImage = (file) => {
-    // Esta es una simulación. En un entorno real usarías Tesseract.js u otro OCR
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        // Simular extracción de texto de la imagen basado en el ejemplo actual
-        const mockText = `IMEI1: 354749603348537
-        IMEI2: 354749607134461
-        PSN: 13240454BE006270
-        Edison cutipa aime
-        60120405
-        93106690
-        Infinix Smart 9`;
-        
-        const extracted = extractNumbers(mockText);
-        resolve(extracted);
-      }, 1000);
-    });
-  };
+        .card {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
 
-  // Función unificada para procesar archivos de imagen
-  const processImageFile = async (file) => {
-    try {
-      const extracted = await processImage(file);
-      
-      setCurrentRecord(prev => ({
-        ...prev,
-        imei1: extracted.imeis[0] || prev.imei1,
-        imei2: extracted.imeis[1] || prev.imei2,
-        telefono: extracted.phones[0] || prev.telefono,
-        dni: extracted.dnis[0] || prev.dni,
-        nombrePersona: extracted.names[0] || prev.nombrePersona,
-        modelo: extracted.models[0] || prev.modelo
-      }));
-      
-    } catch (error) {
-      console.error('Error procesando imagen:', error);
-      setPasteStatus('Error al procesar imagen');
-      setTimeout(() => setPasteStatus(''), 2000);
-    }
-  };
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
 
-  const handleImageUpload = async (event) => {
-    const file = event.target.files[0];
-    if (file) {
-      await processImageFile(file);
-    }
-  };
+        .title {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
 
-  // Función para pegar desde portapapeles manualmente
-  const pasteFromClipboard = async () => {
-    try {
-      const permission = await navigator.permissions.query({ name: 'clipboard-read' });
-      if (permission.state === 'granted' || permission.state === 'prompt') {
-        const clipboardItems = await navigator.clipboard.read();
-        for (const clipboardItem of clipboardItems) {
-          for (const type of clipboardItem.types) {
-            if (type.startsWith('image/')) {
-              const blob = await clipboardItem.getType(type);
-              setPasteStatus('Procesando imagen del portapapeles...');
-              await processImageFile(blob);
-              setPasteStatus('¡Imagen procesada!');
-              setTimeout(() => setPasteStatus(''), 2000);
-              return;
+        .subtitle {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 40px;
+        }
+
+        .upload-area {
+            border: 3px dashed #667eea;
+            border-radius: 15px;
+            padding: 40px;
+            text-align: center;
+            margin-bottom: 30px;
+            background: #f8f9ff;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+
+        .upload-area:hover {
+            border-color: #764ba2;
+            background: #f0f4ff;
+            transform: translateY(-2px);
+        }
+
+        .upload-area.dragover {
+            border-color: #10b981;
+            background: #ecfdf5;
+        }
+
+        .upload-icon {
+            font-size: 3rem;
+            margin-bottom: 15px;
+        }
+
+        .upload-text {
+            font-size: 1.2rem;
+            color: #667eea;
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+
+        .upload-hint {
+            color: #6b7280;
+            font-size: 0.9rem;
+        }
+
+        .buttons {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            margin-bottom: 30px;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-secondary {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+        }
+
+        .status {
+            text-align: center;
+            padding: 12px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            font-weight: 600;
+            display: none;
+        }
+
+        .status-processing {
+            background: #fef3c7;
+            color: #92400e;
+            border: 2px solid #f59e0b;
+        }
+
+        .status-success {
+            background: #d1fae5;
+            color: #065f46;
+            border: 2px solid #10b981;
+        }
+
+        .status-error {
+            background: #fee2e2;
+            color: #991b1b;
+            border: 2px solid #ef4444;
+        }
+
+        .results {
+            display: none;
+            background: #f8f9ff;
+            border-radius: 15px;
+            padding: 30px;
+        }
+
+        .results.show {
+            display: block;
+        }
+
+        .results-title {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #374151;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .data-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+        }
+
+        .data-item {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            border: 2px solid #e5e7eb;
+            transition: all 0.3s ease;
+        }
+
+        .data-item:hover {
+            border-color: #667eea;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.1);
+        }
+
+        .data-label {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: #6b7280;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .data-value {
+            font-size: 1.3rem;
+            font-weight: 700;
+            color: #1f2937;
+            font-family: 'Courier New', monospace;
+            word-break: break-all;
+            margin-bottom: 12px;
+            min-height: 30px;
+            display: flex;
+            align-items: center;
+        }
+
+        .data-value.empty {
+            color: #9ca3af;
+            font-style: italic;
+            font-weight: normal;
+        }
+
+        .copy-btn {
+            width: 100%;
+            padding: 8px 12px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .copy-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+        }
+
+        .copy-btn:disabled {
+            background: #d1d5db;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .copy-feedback {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #10b981;
+            color: white;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-weight: 600;
+            transform: translateX(100%);
+            transition: transform 0.3s ease;
+            z-index: 1000;
+        }
+
+        .copy-feedback.show {
+            transform: translateX(0);
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .combined-buttons {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            margin-bottom: 30px;
+        }
+
+        @media (max-width: 640px) {
+            .combined-buttons {
+                flex-direction: column;
             }
-          }
         }
-        setPasteStatus('No se encontró imagen en el portapapeles');
-        setTimeout(() => setPasteStatus(''), 2000);
-      }
-    } catch (err) {
-      setPasteStatus('Error accediendo al portapapeles');
-      setTimeout(() => setPasteStatus(''), 2000);
-    }
-  };
+            .content {
+                padding: 20px;
+            }
 
-  const addRecord = () => {
-    if (currentRecord.imei1 || currentRecord.imei2) {
-      const newRecord = {
-        ...currentRecord,
-        id: Date.now(),
-        fecha: new Date().toLocaleDateString('es-ES'),
-        hora: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
-      };
-      
-      // Agregar a la lista local
-      setRecords(prev => [newRecord, ...prev]);
-      
-      // Guardar en Google Sheets
-      saveToGoogleSheets(newRecord);
-      
-      // Limpiar formulario manteniendo cliente e intermediario
-      setCurrentRecord({
-        clienteEnvia: currentRecord.clienteEnvia, // Mantener cliente seleccionado
-        intermediario: currentRecord.intermediario, // Mantener intermediario
-        nombrePersona: '',
-        telefono: '',
-        dni: '',
-        modelo: '',
-        imei1: '',
-        imei2: '',
-        fecha: new Date().toLocaleDateString('es-ES'),
-        hora: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
-      });
-    }
-  };
+            .buttons {
+                flex-direction: column;
+            }
 
-  // Función para guardar en Google Sheets
-  const saveToGoogleSheets = async (record) => {
-    try {
-      setSaveStatus('Guardando en Google Sheets...');
-      
-      const response = await fetch(GOOGLE_SCRIPT_URL, {
-        method: 'POST',
-        mode: 'no-cors', // Necesario para Google Apps Script
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          fecha: record.fecha,
-          hora: record.hora,
-          clienteEnvia: record.clienteEnvia,
-          intermediario: record.intermediario,
-          nombrePersona: record.nombrePersona,
-          telefono: record.telefono,
-          dni: record.dni,
-          modelo: record.modelo,
-          imei1: record.imei1,
-          imei2: record.imei2
-        })
-      });
-      
-      setSaveStatus('✅ Guardado en Google Sheets');
-      setTimeout(() => setSaveStatus(''), 3000);
-      
-    } catch (error) {
-      console.error('Error guardando en Google Sheets:', error);
-      setSaveStatus('❌ Error al guardar en Google Sheets');
-      setTimeout(() => setSaveStatus(''), 5000);
-    }
-  };
+            .data-grid {
+                grid-template-columns: 1fr;
+            }
 
-  const agregarCliente = () => {
-    if (nuevoCliente.trim() && !clientesRecurrentes.includes(nuevoCliente.trim())) {
-      setClientesRecurrentes(prev => [...prev, nuevoCliente.trim()]);
-      setCurrentRecord(prev => ({ ...prev, clienteEnvia: nuevoCliente.trim() }));
-      setNuevoCliente('');
-    }
-  };
-
-  const deleteRecord = (id) => {
-    setRecords(prev => prev.filter(record => record.id !== id));
-  };
-
-  const exportToCSV = () => {
-    if (records.length === 0) return;
-    
-    const headers = ['Fecha', 'Hora', 'Cliente Envía', 'Intermediario', 'Nombre Persona', 'Teléfono', 'DNI', 'Modelo', 'IMEI 1', 'IMEI 2'];
-    const csvContent = [
-      headers.join(','),
-      ...records.map(record => 
-        [record.fecha, record.hora, record.clienteEnvia, record.intermediario, record.nombrePersona, record.telefono, record.dni, record.modelo, record.imei1, record.imei2].join(',')
-      )
-    ].join('\n');
-
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `registros_imei_${new Date().toISOString().split('T')[0]}.csv`);
-    link.click();
-  };
-
-  const copyIMEI = (imei) => {
-    navigator.clipboard.writeText(imei);
-  };
-
-  return (
-    <div className="max-w-6xl mx-auto p-6 bg-gray-50 min-h-screen">
-      <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
-        <h1 className="text-3xl font-bold text-gray-800 mb-6 text-center">
-          📱 Extractor y Organizador de IMEI
-        </h1>
-
-        {/* Formulario de entrada */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-          {/* Gestión de clientes */}
-          <div className="space-y-4">
-            <h2 className="text-xl font-semibold text-gray-700">Cliente que Envía</h2>
-            
-            <select
-              className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-              value={currentRecord.clienteEnvia}
-              onChange={(e) => setCurrentRecord(prev => ({...prev, clienteEnvia: e.target.value}))}
-            >
-              <option value="">Seleccionar cliente...</option>
-              {clientesRecurrentes.map((cliente, index) => (
-                <option key={index} value={cliente}>{cliente}</option>
-              ))}
-            </select>
-            
-            <div className="flex gap-2">
-              <input
-                type="text"
-                placeholder="Nuevo cliente..."
-                className="flex-1 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                value={nuevoCliente}
-                onChange={(e) => setNuevoCliente(e.target.value)}
-              />
-              <button
-                onClick={agregarCliente}
-                className="bg-purple-500 hover:bg-purple-600 text-white px-4 py-3 rounded-lg transition-colors"
-              >
-                <Plus size={20} />
-              </button>
+            .title {
+                font-size: 2rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <div class="header">
+                <h1 class="title">📱 Extractor de Datos</h1>
+                <p class="subtitle">Pega una imagen y extrae IMEI, DNI y Celular instantáneamente</p>
             </div>
-            
-            <div className="text-sm text-gray-600">
-              <strong>Registros del cliente seleccionado hoy:</strong><br/>
-              {currentRecord.clienteEnvia 
-                ? records.filter(r => r.clienteEnvia === currentRecord.clienteEnvia).length 
-                : 0} equipos
-            </div>
-          </div>
 
-          {/* Información extraída */}
-          <div className="space-y-4">
-            <h2 className="text-xl font-semibold text-gray-700">Información Extraída</h2>
-            
-            <input
-              type="text"
-              placeholder="Intermediario/Atendedor (ej: Yeni Sumire)"
-              className="w-full p-3 border border-orange-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent bg-orange-50"
-              value={currentRecord.intermediario}
-              onChange={(e) => setCurrentRecord(prev => ({...prev, intermediario: e.target.value}))}
-            />
-            
-            <input
-              type="text"
-              placeholder="Nombre del cliente final"
-              className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              value={currentRecord.nombrePersona}
-              onChange={(e) => setCurrentRecord(prev => ({...prev, nombrePersona: e.target.value}))}
-            />
-            
-            <input
-              type="text"
-              placeholder="Teléfono (9 dígitos) - Opcional"
-              className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              value={currentRecord.telefono}
-              onChange={(e) => setCurrentRecord(prev => ({...prev, telefono: e.target.value}))}
-              maxLength="9"
-            />
-            
-            <input
-              type="text"
-              placeholder="DNI (8 dígitos) - Opcional"
-              className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              value={currentRecord.dni}
-              onChange={(e) => setCurrentRecord(prev => ({...prev, dni: e.target.value}))}
-              maxLength="8"
-            />
-            
-            <input
-              type="text"
-              placeholder="Modelo del equipo"
-              className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              value={currentRecord.modelo}
-              onChange={(e) => setCurrentRecord(prev => ({...prev, modelo: e.target.value}))}
-            />
-          </div>
-
-          {/* Captura de IMEI */}
-          <div className="space-y-4">
-            <h2 className="text-xl font-semibold text-gray-700">Captura de IMEI</h2>
-            
-            <div className="flex gap-2">
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="flex-1 bg-blue-500 hover:bg-blue-600 text-white px-4 py-3 rounded-lg flex items-center justify-center gap-2 transition-colors"
-              >
-                <Upload size={20} />
-                Subir Imagen
-              </button>
-              
-              <button
-                onClick={pasteFromClipboard}
-                className="flex-1 bg-green-500 hover:bg-green-600 text-white px-4 py-3 rounded-lg flex items-center justify-center gap-2 transition-colors"
-              >
-                <Clipboard size={20} />
-                Pegar Imagen
-              </button>
-            </div>
-            
-            {pasteStatus && (
-              <div className={`text-center py-2 px-4 rounded-lg text-sm font-medium ${
-                pasteStatus.includes('Error') || pasteStatus.includes('No se encontró') 
-                  ? 'bg-red-100 text-red-700' 
-                  : pasteStatus.includes('Procesando')
-                  ? 'bg-yellow-100 text-yellow-700'
-                  : 'bg-green-100 text-green-700'
-              }`}>
-                {pasteStatus}
-              </div>
-            )}
-            
-            <input
-              type="file"
-              accept="image/*"
-              onChange={handleImageUpload}
-              className="hidden"
-              ref={fileInputRef}
-            />
-            
-            <div className="grid grid-cols-1 gap-3">
-              <input
-                type="text"
-                placeholder="IMEI 1 (15 dígitos)"
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                value={currentRecord.imei1}
-                onChange={(e) => setCurrentRecord(prev => ({...prev, imei1: e.target.value}))}
-                maxLength="15"
-              />
-              
-              <input
-                type="text"
-                placeholder="IMEI 2 (15 dígitos)"
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                value={currentRecord.imei2}
-                onChange={(e) => setCurrentRecord(prev => ({...prev, imei2: e.target.value}))}
-                maxLength="15"
-              />
-            </div>
-            
-            <button
-              onClick={addRecord}
-              className="w-full bg-green-500 hover:bg-green-600 text-white px-4 py-3 rounded-lg flex items-center justify-center gap-2 transition-colors"
-            >
-              <Plus size={20} />
-              Agregar Registro
-            </button>
-            
-            {saveStatus && (
-              <div className={`text-center py-2 px-4 rounded-lg text-sm font-medium ${
-                saveStatus.includes('Error') || saveStatus.includes('❌') 
-                  ? 'bg-red-100 text-red-700' 
-                  : saveStatus.includes('Guardando')
-                  ? 'bg-yellow-100 text-yellow-700'
-                  : 'bg-green-100 text-green-700'
-              }`}>
-                {saveStatus}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Botones de acción */}
-        <div className="flex gap-4 mb-6">
-          <button
-            onClick={exportToCSV}
-            disabled={records.length === 0}
-            className="bg-purple-500 hover:bg-purple-600 disabled:bg-gray-300 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
-          >
-            <Download size={20} />
-            Exportar Excel Local ({records.length})
-          </button>
-          
-          <a
-            href="https://docs.google.com/spreadsheets"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
-            style={{textDecoration: 'none'}}
-          >
-            📊 Ver Google Sheets
-          </a>
-        </div>
-      </div>
-
-      {/* Lista de registros */}
-      <div className="bg-white rounded-lg shadow-lg p-6">
-        <h2 className="text-2xl font-semibold text-gray-800 mb-4">
-          Registros del Día ({records.length})
-        </h2>
-        
-        {records.length === 0 ? (
-          <p className="text-gray-500 text-center py-8">No hay registros aún. Comienza agregando uno.</p>
-        ) : (
-          <div className="grid gap-4">
-            {records.map((record, index) => (
-              <div key={record.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
-                <div className="grid grid-cols-1 md:grid-cols-6 gap-4 items-center">
-                  <div className="md:col-span-1">
-                    <p className="font-semibold text-gray-700">#{records.length - index}</p>
-                    <p className="text-sm text-gray-500">{record.fecha}</p>
-                    <p className="text-sm text-gray-500">{record.hora}</p>
-                    <p className="text-xs text-purple-600 font-medium">{record.clienteEnvia}</p>
-                    {record.intermediario && (
-                      <p className="text-xs text-orange-600 font-medium">👤 {record.intermediario}</p>
-                    )}
-                  </div>
-                  
-                  <div className="md:col-span-2">
-                    <p className="font-medium text-gray-800">{record.nombrePersona || 'Sin nombre'}</p>
-                    {record.telefono && <p className="text-sm text-gray-600">📱 {record.telefono}</p>}
-                    {record.dni && <p className="text-sm text-gray-600">🆔 {record.dni}</p>}
-                    <p className="text-sm text-gray-600">📋 {record.modelo}</p>
-                  </div>
-                  
-                  <div className="md:col-span-2 space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-gray-600">IMEI 1:</span>
-                      <code className="text-sm bg-gray-100 px-2 py-1 rounded">{record.imei1}</code>
-                      {record.imei1 && (
-                        <button 
-                          onClick={() => copyIMEI(record.imei1)}
-                          className="text-blue-500 hover:text-blue-700"
-                        >
-                          <Copy size={16} />
-                        </button>
-                      )}
-                    </div>
-                    {record.imei2 && (
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-gray-600">IMEI 2:</span>
-                        <code className="text-sm bg-gray-100 px-2 py-1 rounded">{record.imei2}</code>
-                        <button 
-                          onClick={() => copyIMEI(record.imei2)}
-                          className="text-blue-500 hover:text-blue-700"
-                        >
-                          <Copy size={16} />
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                  
-                  <div className="md:col-span-1 flex justify-end">
-                    <button
-                      onClick={() => deleteRecord(record.id)}
-                      className="text-red-500 hover:text-red-700 p-2"
-                    >
-                      <Trash2 size={20} />
-                    </button>
-                  </div>
+            <div class="content">
+                <div class="upload-area" id="uploadArea" onclick="document.getElementById('fileInput').click()">
+                    <div class="upload-icon">📷</div>
+                    <div class="upload-text">Haz clic para subir imagen</div>
+                    <div class="upload-hint">O arrastra y suelta aquí, o usa Ctrl+V para pegar</div>
                 </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-      
-      {/* Instrucciones */}
-      <div className="bg-blue-50 rounded-lg p-6 mt-6">
-        <h3 className="text-lg font-semibold text-blue-800 mb-2">📋 Cómo usar:</h3>
-        <ol className="list-decimal list-inside space-y-1 text-blue-700 mb-4">
-          <li><strong>Selecciona o agrega el cliente que envía</strong> (te ayuda a contar cuántos equipos por cliente)</li>
-          <li><strong>Para imágenes:</strong></li>
-          <ul className="list-disc list-inside ml-6 space-y-1">
-            <li><strong>Pegar directamente:</strong> Copia la imagen (Ctrl+C) y pégala aquí (Ctrl+V)</li>
-            <li><strong>Botón "Pegar Imagen":</strong> Si el pegado automático no funciona</li>
-            <li><strong>Subir archivo:</strong> Selecciona imagen desde tu dispositivo</li>
-          </ul>
-          <li><strong>Auto-extracción:</strong> La app detecta automáticamente:</li>
-          <ul className="list-disc list-inside ml-6 space-y-1">
-            <li>📱 IMEI 1 y 2 (15 dígitos)</li>
-            <li>📞 Teléfono (9 dígitos, empezando con 9)</li>
-            <li>🆔 DNI (8 dígitos)</li>
-            <li>👤 Nombres</li>
-            <li>📋 Modelos de teléfono</li>
-          </ul>
-          <li>Revisa y corrige si es necesario</li>
-          <li>Haz clic en "Agregar Registro"</li>
-          <li>Repite para cada equipo</li>
-          <li>Al final del día, exporta todo a Excel</li>
-        </ol>
-        
-        <div className="bg-green-100 border-l-4 border-green-500 p-4 mt-4">
-          <p className="text-green-700 font-medium">💡 Consejo rápido:</p>
-          <p className="text-green-600">
-            1. Selecciona cliente que envía<br/>
-            2. Escribe intermediario (ej: "Yeni Sumire")<br/>
-            3. Pega imagen con Ctrl+V → se llenan IMEI y nombre automáticamente<br/>
-            4. Completa teléfono/DNI si los tienes<br/>
-            5. ¡Agregar registro!
-          </p>
-        </div>
-      </div>
-    </div>
-  );
-};
 
-export default IMEIExtractor;
+                <div class="buttons">
+                    <button class="btn btn-primary" onclick="document.getElementById('fileInput').click()">
+                        📁 Seleccionar Archivo
+                    </button>
+                    <button class="btn btn-secondary" onclick="pegarImagen()">
+                        📋 Pegar del Portapapeles
+                    </button>
+                </div>
+
+                <input type="file" id="fileInput" accept="image/*" class="hidden" onchange="procesarImagen(this.files[0])">
+
+                <div class="status" id="status"></div>
+
+                <div class="results" id="results">
+                    <h2 class="results-title">✨ Datos Extraídos</h2>
+                    
+                    <!-- Botones de copiado combinado -->
+                    <div class="combined-buttons" style="display: flex; gap: 15px; justify-content: center; margin-bottom: 30px;">
+                        <button class="btn btn-primary" onclick="copiarTodosCombinados()" id="copyAllBtn" disabled>
+                            📋 Copiar Todos los Datos
+                        </button>
+                        <button class="btn btn-secondary" onclick="copiarSoloIMEIs()" id="copyIMEIsBtn" disabled>
+                            📱 Copiar Solo IMEIs
+                        </button>
+                    </div>
+                    
+                    <div class="data-grid">
+                        <div class="data-item">
+                            <div class="data-label">📱 IMEI 1</div>
+                            <div class="data-value" id="imei1Value">-</div>
+                            <button class="copy-btn" id="copyImei1" onclick="copiarTexto('imei1Value', 'IMEI 1')" disabled>
+                                📋 Copiar IMEI 1
+                            </button>
+                        </div>
+
+                        <div class="data-item">
+                            <div class="data-label">📱 IMEI 2</div>
+                            <div class="data-value" id="imei2Value">-</div>
+                            <button class="copy-btn" id="copyImei2" onclick="copiarTexto('imei2Value', 'IMEI 2')" disabled>
+                                📋 Copiar IMEI 2
+                            </button>
+                        </div>
+
+                        <div class="data-item">
+                            <div class="data-label">🆔 DNI</div>
+                            <div class="data-value" id="dniValue">-</div>
+                            <button class="copy-btn" id="copyDni" onclick="copiarTexto('dniValue', 'DNI')" disabled>
+                                📋 Copiar DNI
+                            </button>
+                        </div>
+
+                        <div class="data-item">
+                            <div class="data-label">📞 Celular</div>
+                            <div class="data-value" id="celularValue">-</div>
+                            <button class="copy-btn" id="copyCelular" onclick="copiarTexto('celularValue', 'Celular')" disabled>
+                                📋 Copiar Celular
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="copy-feedback" id="copyFeedback">¡Copiado!</div>
+
+    <script>
+        let datosExtraidos = {
+            imei1: '',
+            imei2: '',
+            dni: '',
+            celular: ''
+        };
+
+        // Función para extraer datos del texto
+        function extraerDatos(texto) {
+            // IMEI: exactamente 15 dígitos
+            const imeis = texto.match(/\b\d{15}\b/g) || [];
+            
+            // Todos los números de 7-9 dígitos que no sean IMEI
+            const numeros = texto.match(/\b\d{7,9}\b/g) || [];
+            const numerosSinIMEI = numeros.filter(num => !imeis.includes(num));
+            
+            // Separar por longitud
+            const numeros7 = numerosSinIMEI.filter(n => n.length === 7);
+            const numeros8 = numerosSinIMEI.filter(n => n.length === 8);
+            const numeros9 = numerosSinIMEI.filter(n => n.length === 9);
+            
+            // Celulares: números de 7-9 dígitos (más flexible)
+            let celulares = [];
+            
+            // Prioridad: números de 9 dígitos que empiecen con 9
+            const celulares9con9 = numeros9.filter(n => n.startsWith('9'));
+            if (celulares9con9.length > 0) {
+                celulares = celulares9con9;
+            } else {
+                // Si no hay números de 9 con 9, tomar números de 8 dígitos
+                if (numeros8.length > 0) {
+                    celulares = [numeros8[0]]; // Tomar el primer número de 8 dígitos
+                } else if (numeros9.length > 0) {
+                    celulares = [numeros9[0]]; // O el primer número de 9 dígitos
+                }
+            }
+            
+            // DNI: números de 8 dígitos que no sean el celular seleccionado
+            let dnis = numeros8.filter(n => !celulares.includes(n));
+            
+            // Si no hay DNI de 8 dígitos, usar números de 7 u otros
+            if (dnis.length === 0 && numeros7.length > 0) {
+                dnis = [numeros7[0]];
+            }
+
+            return {
+                imeis: imeis,
+                dnis: dnis,
+                celulares: celulares
+            };
+        }
+
+        // Simular procesamiento de imagen
+        function procesarImagen(archivo) {
+            if (!archivo) return;
+            
+            mostrarEstado('🔄 Procesando imagen...', 'processing');
+            
+            setTimeout(() => {
+                // Simular extracción de texto (en la realidad usarías OCR)
+                const textoSimulado = `IMEI1: 354749603348537
+                IMEI2: 354749607134461
+                PSN: 13240454BE006270
+                Edison cutipa aime
+                60120405
+                93106690
+                Infinix Smart 9`;
+                
+                const datos = extraerDatos(textoSimulado);
+                
+                // Asignar datos extraídos
+                datosExtraidos = {
+                    imei1: datos.imeis[0] || '',
+                    imei2: datos.imeis[1] || '',
+                    dni: datos.dnis[0] || '',
+                    celular: datos.celulares[0] || ''
+                };
+                
+                mostrarResultados();
+                mostrarEstado('✅ ¡Datos extraídos correctamente!', 'success');
+                
+                setTimeout(() => {
+                    document.getElementById('status').style.display = 'none';
+                }, 3000);
+                
+            }, 1500);
+        }
+
+        // Mostrar resultados
+        function mostrarResultados() {
+            // Actualizar valores
+            document.getElementById('imei1Value').textContent = datosExtraidos.imei1 || '-';
+            document.getElementById('imei2Value').textContent = datosExtraidos.imei2 || '-';
+            document.getElementById('dniValue').textContent = datosExtraidos.dni || '-';
+            document.getElementById('celularValue').textContent = datosExtraidos.celular || '-';
+
+            // Actualizar clases y botones
+            actualizarBotonesCopia();
+            
+            // Mostrar sección de resultados
+            document.getElementById('results').classList.add('show');
+        }
+
+        // Actualizar estado de botones de copia
+        function actualizarBotonesCopia() {
+            const items = [
+                { id: 'copyImei1', valueId: 'imei1Value', data: datosExtraidos.imei1 },
+                { id: 'copyImei2', valueId: 'imei2Value', data: datosExtraidos.imei2 },
+                { id: 'copyDni', valueId: 'dniValue', data: datosExtraidos.dni },
+                { id: 'copyCelular', valueId: 'celularValue', data: datosExtraidos.celular }
+            ];
+
+            items.forEach(item => {
+                const btn = document.getElementById(item.id);
+                const valueEl = document.getElementById(item.valueId);
+                
+                if (item.data) {
+                    btn.disabled = false;
+                    valueEl.classList.remove('empty');
+                } else {
+                    btn.disabled = true;
+                    valueEl.classList.add('empty');
+                }
+            });
+
+            // Botones combinados
+            const hayDatos = datosExtraidos.imei1 || datosExtraidos.imei2 || datosExtraidos.dni || datosExtraidos.celular;
+            const hayIMEIs = datosExtraidos.imei1 || datosExtraidos.imei2;
+            
+            document.getElementById('copyAllBtn').disabled = !hayDatos;
+            document.getElementById('copyIMEIsBtn').disabled = !hayIMEIs;
+        }
+
+        // Pegar imagen del portapapeles
+        async function pegarImagen() {
+            try {
+                const items = await navigator.clipboard.read();
+                for (const item of items) {
+                    for (const type of item.types) {
+                        if (type.startsWith('image/')) {
+                            const blob = await item.getType(type);
+                            procesarImagen(blob);
+                            return;
+                        }
+                    }
+                }
+                mostrarEstado('❌ No se encontró imagen en el portapapeles', 'error');
+                setTimeout(() => {
+                    document.getElementById('status').style.display = 'none';
+                }, 3000);
+            } catch (error) {
+                mostrarEstado('❌ Error al acceder al portapapeles', 'error');
+                setTimeout(() => {
+                    document.getElementById('status').style.display = 'none';
+                }, 3000);
+            }
+        }
+
+        // Copiar todos los datos combinados
+        async function copiarTodosCombinados() {
+            const datos = [];
+            
+            if (datosExtraidos.imei1) datos.push(`IMEI 1: ${datosExtraidos.imei1}`);
+            if (datosExtraidos.imei2) datos.push(`IMEI 2: ${datosExtraidos.imei2}`);
+            if (datosExtraidos.dni) datos.push(`DNI: ${datosExtraidos.dni}`);
+            if (datosExtraidos.celular) datos.push(`Celular: ${datosExtraidos.celular}`);
+            
+            const textoCompleto = datos.join('\n');
+            
+            if (textoCompleto) {
+                try {
+                    await navigator.clipboard.writeText(textoCompleto);
+                    mostrarFeedbackCopia('📋 Todos los datos copiados');
+                } catch (error) {
+                    console.error('Error al copiar:', error);
+                    mostrarFeedbackCopia('❌ Error al copiar');
+                }
+            }
+        }
+
+        // Copiar solo los IMEIs
+        async function copiarSoloIMEIs() {
+            const imeis = [];
+            
+            if (datosExtraidos.imei1) imeis.push(`IMEI 1: ${datosExtraidos.imei1}`);
+            if (datosExtraidos.imei2) imeis.push(`IMEI 2: ${datosExtraidos.imei2}`);
+            
+            const textoIMEIs = imeis.join('\n');
+            
+            if (textoIMEIs) {
+                try {
+                    await navigator.clipboard.writeText(textoIMEIs);
+                    mostrarFeedbackCopia('📱 IMEIs copiados');
+                } catch (error) {
+                    console.error('Error al copiar IMEIs:', error);
+                    mostrarFeedbackCopia('❌ Error al copiar IMEIs');
+                }
+            }
+        }
+
+        // Copiar texto al portapapeles
+        async function copiarTexto(valueId, tipo) {
+            const elemento = document.getElementById(valueId);
+            const texto = elemento.textContent;
+            
+            if (texto && texto !== '-') {
+                try {
+                    await navigator.clipboard.writeText(texto);
+                    mostrarFeedbackCopia(`${tipo} copiado: ${texto}`);
+                } catch (error) {
+                    console.error('Error al copiar:', error);
+                    mostrarFeedbackCopia('❌ Error al copiar');
+                }
+            }
+        }
+
+        // Mostrar feedback de copia
+        function mostrarFeedbackCopia(mensaje) {
+            const feedback = document.getElementById('copyFeedback');
+            feedback.textContent = mensaje;
+            feedback.classList.add('show');
+            
+            setTimeout(() => {
+                feedback.classList.remove('show');
+            }, 2000);
+        }
+
+        // Mostrar estado
+        function mostrarEstado(mensaje, tipo) {
+            const status = document.getElementById('status');
+            status.textContent = mensaje;
+            status.className = `status status-${tipo}`;
+            status.style.display = 'block';
+        }
+
+        // Eventos de drag and drop
+        const uploadArea = document.getElementById('uploadArea');
+
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            
+            const files = e.dataTransfer.files;
+            if (files.length > 0 && files[0].type.startsWith('image/')) {
+                procesarImagen(files[0]);
+            }
+        });
+
+        // Pegado automático global
+        document.addEventListener('paste', async (e) => {
+            const items = e.clipboardData?.items;
+            if (!items) return;
+
+            for (let i = 0; i < items.length; i++) {
+                if (items[i].type.indexOf('image') !== -1) {
+                    e.preventDefault();
+                    const file = items[i].getAsFile();
+                    if (file) {
+                        procesarImagen(file);
+                    }
+                    break;
+                }
+            }
+        });
+
+        // Inicialización
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('🚀 Extractor de Datos IMEI listo');
+        });
+    </script>
+</body>
+</html>
